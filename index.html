@@ -1,0 +1,612 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>Fan Catch Probability Map – Prototype</title>
+  <style>
+    body { font-family: system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif; margin: 0; padding: 24px; background:#ffffff; }
+    #app { max-width: 1000px; margin: 0 auto; }
+    .controls { display:flex; gap:12px; align-items:center; margin:12px 0 20px; flex-wrap:wrap;}
+    .dot { stroke:#0a0a0a; stroke-width:1; }
+    .tooltip { position: absolute; background:#111; color:#fff; padding:6px 8px; border-radius:6px; font-size:12px; pointer-events:none; opacity:0; transform: translate(-50%, -120%); white-space:nowrap; }
+    .legend { font-size:13px; margin-top:8px; color:#444; }
+    .badge { padding:2px 8px; border:1px solid #ddd; border-radius:999px; font-size:12px; }
+    select {
+      height: 36px;
+      font-size: 15px;
+      padding: 0 10px;
+      border-radius: 6px;
+      border: 1px solid #bbb;
+      background: #fff;
+      vertical-align: middle;
+      margin-right: 2px;
+      box-sizing: border-box;
+    }
+  </style>
+</head>
+<body>
+  <div id="app" style="position:relative;">
+    <h1>Fan Ball-Catch Probability Map at Truist Park (Prototype)</h1>
+    <div class="controls">
+      <label>Filter: 
+        <select id="typeSel">
+          <option value="ALL">All</option>
+          <option value="HR">Home Runs</option>
+          <option value="FOUL">Foul Balls</option>
+        </select>
+      </label>
+      <label>Player: 
+        <select id="playerSel">
+          <option value="ALL_PLAYERS">All</option>
+          <option value="marcell-ozuna.csv">Marcell Ozuna</option>
+          <option value="matt-olson.csv">Matt Olson</option>
+          <option value="ronald-acuna-jr.csv">Ronald Acuña Jr.</option>
+        </select>
+      </label>
+      <button id="playBtn" style="padding:6px 18px;font-size:15px;cursor:pointer;">Play</button>
+      <button id="toggleOverlayBtn" style="padding:6px 18px;font-size:15px;cursor:pointer;">Show % Overlay</button>
+    </div>
+  <div id="playerPhotos" style="position:absolute;top:18px;right:18px;display:flex;flex-direction:row-reverse;gap:0;"></div>
+    <!-- Legend for HR and FOUL -->
+    <div id="ball-legend" style="position:absolute;top:90px;right:18px;display:flex;align-items:center;gap:18px;background:#fff8;padding:7px 16px 7px 12px;border-radius:12px;box-shadow:0 2px 8px #0001;font-size:15px;z-index:10;user-select:none;">
+      <span id="legend-hr" style="display:flex;align-items:center;gap:6px;cursor:pointer;">
+        <span style="display:inline-block;width:18px;height:18px;border-radius:50%;background:#e53935;border:2px solid #b71c1c;"></span>
+        <span>Home Runs</span>
+      </span>
+      <span id="legend-foul" style="display:flex;align-items:center;gap:6px;cursor:pointer;">
+        <span style="display:inline-block;width:18px;height:18px;border-radius:50%;background:#1e88e5;border:2px solid #0d47a1;"></span>
+        <span>Foul Balls</span>
+      </span>
+    </div>
+    <!-- Inline SVG for crisp overlay control -->
+    <div id="stage"></div>
+    <div class="legend">
+      <p>2025 player data and inspiration from <a href="https://baseballsavant.mlb.com/" target="_blank" rel="noopener" style="color:#1e88e5;text-decoration:underline;">Baseball Savant</a>. Created by <a href="https://www.linkedin.com/in/samamorris/" target="_blank" rel="noopener" style="color:#1e88e5;text-decoration:underline;">Sam Morris</a>.</p>
+      <p><strong>Disclaimer:</strong> This tool is for educational and demonstration purposes only. Largely the data shown here is mock data seeded from Baseball Savant. For actual MLB Statcast data, visit <a href="https://baseballsavant.mlb.com/" target="_blank" rel="noopener" style="color:#1e88e5;text-decoration:underline;">Baseball Savant</a>!</p>
+    </div>
+  </div>
+  <div id="tooltip" class="tooltip"></div>
+
+
+  <!--
+    Fan Ball-Catch Probability Map at Truist Park (Prototype)
+    -------------------------------------------------------
+    - D3.js-based interactive visualization for demo/educational use
+    - Shows HR and foul ball landing spots, overlays, and animation
+    - All foul ball data is mock, launch angle is also mock, home run distance and launch angle is mostly real and accurate as of mid-August 2025 from Baseball Savant
+    - See README for usage and design notes
+  -->
+  <script src="https://d3js.org/d3.v7.min.js"></script>
+  <script>
+  (async function() {
+
+
+    // --- SVG and Overlay Setup ---
+    const stage = d3.select('#stage');
+    // Load the SVG field template
+    const svgText = await (await fetch('truist-field.svg')).text();
+    stage.html(svgText);
+    const svg = d3.select('#stage svg');
+    // Ensure overlay and overlayLabels groups exist for dynamic drawing
+    let overlay = svg.select('#overlay');
+    if (overlay.empty()) {
+      overlay = svg.append('g').attr('id', 'overlay');
+    }
+    let overlayLabels = svg.select('#overlayLabels');
+    if (overlayLabels.empty()) {
+      overlayLabels = svg.append('g').attr('id', 'overlayLabels');
+    }
+    const tooltip = d3.select('#tooltip');
+
+
+  // --- Color helper for dot type ---
+
+
+    function colorByType(t) {
+      return t === 'HR' ? '#e53935' : (t === 'FOUL' ? '#1e88e5' : '#43a047');
+    }
+
+
+
+
+
+  // --- Overlay toggle state ---
+  let overlayOn = false;
+
+
+    // --- Main rendering function ---
+    // Draws dots for each hit, overlays, and handles tooltips
+    // Dots are static (no editing/dragging for demo clarity)
+    function render(data) {
+      const type = document.getElementById('typeSel').value;
+      const filtered = type === 'ALL' ? data : data.filter(d => d.type === type);
+      const dots = overlay.selectAll('circle.dot').data(filtered, d => d.id);
+      // Remove any previous overlays
+      overlay.selectAll('.cluster-box').remove();
+      overlayLabels.selectAll('.cluster-box').remove();
+      // Draw grid overlays if enabled and not showing all types
+      if (overlayOn && type !== 'ALL') {
+        renderGridClusters(data, type);
+      }
+      // Draw dots for each hit
+      dots.enter().append('circle')
+        .attr('class','dot')
+        .attr('r', 15)
+        .attr('cx', d => +d.x)
+        .attr('cy', d => +d.y)
+        .attr('fill', d => colorByType(d.type))
+        // Tooltip on hover
+        .on('mouseenter', (event, d) => {
+          let tip = `${d.type} • EV ${d.ev}`;
+          if (d.hr_distance) {
+            tip += ` • Distance: ${d.hr_distance} ft`;
+          }
+          tooltip.style('opacity', 1)
+            .text(tip)
+            .style('left', (event.pageX)+'px')
+            .style('top', (event.pageY)+'px');
+        })
+        .on('mousemove', (event) => {
+          tooltip.style('left', (event.pageX)+'px')
+                 .style('top', (event.pageY)+'px');
+        })
+        .on('mouseleave', () => tooltip.style('opacity', 0));
+      // Update dot positions/colors if data changes
+      dots.attr('fill', d => colorByType(d.type))
+          .attr('cx', d => +d.x)
+          .attr('cy', d => +d.y);
+      dots.exit().remove();
+      // Hide tooltip if clicking elsewhere
+      svg.on('click', function() { 
+        tooltip.style('opacity', 0); 
+      });
+    }
+
+
+    // --- Data loading and animation logic ---
+    // Loads CSV data for selected player(s), merges if needed, and triggers rendering
+    // Handles Play button animation for each hit
+    async function loadAndRender(csvFile) {
+      // If ALL_PLAYERS, load and merge all player CSVs
+      if (csvFile === 'ALL_PLAYERS') {
+        const files = ['marcell-ozuna.csv', 'matt-olson.csv', 'ronald-acuna-jr.csv'];
+        let allData = [];
+        for (const file of files) {
+          let rawCsv = await (await fetch(file)).text();
+          let lines = rawCsv.split('\n');
+          // Remove duplicate header if present
+          if (lines[0].startsWith('id') && lines[1] && lines[1].startsWith('id')) {
+            lines.splice(0, 1);
+            rawCsv = lines.join('\n');
+          }
+          // Parse CSV row
+          const parsed = d3.csvParse(rawCsv, d => ({
+            id: file + '-' + d.id, // prefix id to avoid collisions
+            x: +d.x,
+            y: +d.y,
+            ev: +d.exit_velocity,
+            la: +d.launch_angle,
+            type: d.type,
+            hr_distance: d.hr_distance && d.hr_distance !== '' ? +d.hr_distance : null
+          }));
+          allData = allData.concat(parsed);
+        }
+        window.playerData = allData;
+        render(window.playerData);
+        // --- Play button: animates each hit from home to landing spot ---
+        let animating = false;
+        let stopRequested = false;
+        const playBtn = document.getElementById('playBtn');
+        playBtn.onclick = async () => {
+          if (animating) {
+            stopRequested = true;
+            overlay.selectAll('.ball-anim').remove();
+            overlay.selectAll('.tracer-path').remove();
+            overlay.selectAll('.landed-dot').remove();
+            playBtn.textContent = 'Play';
+            animating = false;
+            return;
+          }
+          animating = true;
+          stopRequested = false;
+          playBtn.textContent = 'Stop';
+          const type = document.getElementById('typeSel').value;
+          const filtered = type === 'ALL' ? window.playerData : window.playerData.filter(d => d.type === type);
+          overlay.selectAll('.ball-anim').remove();
+          overlay.selectAll('.tracer-path').remove();
+          overlay.selectAll('.landed-dot').remove();
+          for (const d of filtered) {
+            if (stopRequested) break;
+            // Home plate coordinates (fixed for this SVG)
+            const x0 = 993, y0 = 982;
+            const x1 = +d.x, y1 = +d.y;
+            // Arc height based on launch angle
+            const arcHeight = Math.max(60, Math.min(350, 8 * d.la));
+            const cx = (x0 + x1) / 2;
+            const cy = (y0 + y1) / 2 - arcHeight;
+            // Draw path for ball flight
+            const path = overlay.append('path')
+              .attr('class', 'tracer-path')
+              .attr('fill', 'none')
+              .attr('stroke', d.type === 'HR' ? '#e53935' : '#1e88e5')
+              .attr('stroke-width', 4)
+              .attr('d', `M${x0},${y0} Q${cx},${cy} ${x1},${y1}`)
+              .attr('opacity', 0.7);
+            // Create a group for the baseball
+            const ballGroup = overlay.append('g')
+              .attr('class', 'ball-anim')
+              .attr('opacity', 1);
+            // White baseball
+            ballGroup.append('circle')
+              .attr('r', 12)
+              .attr('fill', '#fff')
+              .attr('stroke', '#0a0a0a')
+              .attr('stroke-width', 2)
+              .attr('cx', 0)
+              .attr('cy', 0);
+            // Red threads (two arcs)
+            ballGroup.append('path')
+              .attr('d', d3.arc()({
+                innerRadius: 8, outerRadius: 8, startAngle: Math.PI/4, endAngle: Math.PI*1.25
+              }))
+              .attr('fill', 'none')
+              .attr('stroke', '#e53935')
+              .attr('stroke-width', 2)
+              .attr('transform', 'rotate(-20)');
+            ballGroup.append('path')
+              .attr('d', d3.arc()({
+                innerRadius: 8, outerRadius: 8, startAngle: -Math.PI/4, endAngle: -Math.PI*1.25
+              }))
+              .attr('fill', 'none')
+              .attr('stroke', '#e53935')
+              .attr('stroke-width', 2)
+              .attr('transform', 'rotate(20)');
+            // Set initial position
+            ballGroup.attr('transform', `translate(${x0},${y0})`);
+            // Duration based on exit velocity
+            const duration = Math.max(1200, Math.min(2800, 3500 - 18 * d.ev));
+            await new Promise(resolve => {
+              ballGroup.transition()
+                .duration(duration)
+                .ease(d3.easeCubicInOut)
+                .attrTween('transform', function() {
+                  return function(t) {
+                    if (stopRequested) return `translate(${x0},${y0})`;
+                    const x = (1-t)*(1-t)*x0 + 2*(1-t)*t*cx + t*t*x1;
+                    const y = (1-t)*(1-t)*y0 + 2*(1-t)*t*cy + t*t*y1;
+                    return `translate(${x},${y})`;
+                  }
+                })
+                .on('end', () => {
+                  ballGroup.remove();
+                  if (!stopRequested) {
+                    overlay.append('circle')
+                      .attr('class', 'landed-dot')
+                      .attr('r', 12)
+                      .attr('cx', x1)
+                      .attr('cy', y1)
+                      .attr('fill', d.type === 'HR' ? '#e53935' : '#1e88e5')
+                      .attr('stroke', '#fff')
+                      .attr('stroke-width', 2)
+                      .attr('opacity', 1);
+                  }
+                  resolve();
+                });
+            });
+            if (stopRequested) break;
+            await new Promise(r => setTimeout(r, 350));
+          }
+          playBtn.textContent = 'Play';
+          animating = false;
+        };
+        return;
+      }
+      // Single player fallback (original logic)
+      let rawCsv = await (await fetch(csvFile)).text();
+      let lines = rawCsv.split('\n');
+      // Remove duplicate header if present
+      if (lines[0].startsWith('id') && lines[1] && lines[1].startsWith('id')) {
+        lines.splice(0, 1);
+        rawCsv = lines.join('\n');
+      }
+      window.playerData = d3.csvParse(rawCsv, d => ({
+        id: d.id,
+        x: +d.x,
+        y: +d.y,
+        ev: +d.exit_velocity,
+        la: +d.launch_angle,
+        type: d.type,
+        hr_distance: d.hr_distance && d.hr_distance !== '' ? +d.hr_distance : null
+      }));
+      render(window.playerData);
+      // --- Play button for single player ---
+      let animating = false;
+      let stopRequested = false;
+      const playBtn = document.getElementById('playBtn');
+      playBtn.onclick = async () => {
+        if (animating) {
+          stopRequested = true;
+          overlay.selectAll('.ball-anim').remove();
+          overlay.selectAll('.tracer-path').remove();
+          overlay.selectAll('.landed-dot').remove();
+          playBtn.textContent = 'Play';
+          animating = false;
+          return;
+        }
+        animating = true;
+        stopRequested = false;
+        playBtn.textContent = 'Stop';
+        const type = document.getElementById('typeSel').value;
+        const filtered = type === 'ALL' ? window.playerData : window.playerData.filter(d => d.type === type);
+        overlay.selectAll('.ball-anim').remove();
+        overlay.selectAll('.tracer-path').remove();
+        overlay.selectAll('.landed-dot').remove();
+        for (const d of filtered) {
+          if (stopRequested) break;
+          const x0 = 993, y0 = 982;
+          const x1 = +d.x, y1 = +d.y;
+          const arcHeight = Math.max(60, Math.min(350, 8 * d.la));
+          const cx = (x0 + x1) / 2;
+          const cy = (y0 + y1) / 2 - arcHeight;
+          const path = overlay.append('path')
+            .attr('class', 'tracer-path')
+            .attr('fill', 'none')
+            .attr('stroke', d.type === 'HR' ? '#e53935' : '#1e88e5')
+            .attr('stroke-width', 4)
+            .attr('d', `M${x0},${y0} Q${cx},${cy} ${x1},${y1}`)
+            .attr('opacity', 0.7);
+          // Create a group for the baseball
+          const ballGroup = overlay.append('g')
+            .attr('class', 'ball-anim')
+            .attr('opacity', 1);
+          // White baseball
+          ballGroup.append('circle')
+            .attr('r', 12)
+            .attr('fill', '#fff')
+            .attr('stroke', '#0a0a0a')
+            .attr('stroke-width', 2)
+            .attr('cx', 0)
+            .attr('cy', 0);
+          // Red threads (two arcs)
+          ballGroup.append('path')
+            .attr('d', d3.arc()({
+              innerRadius: 8, outerRadius: 8, startAngle: Math.PI/4, endAngle: Math.PI*1.25
+            }))
+            .attr('fill', 'none')
+            .attr('stroke', '#e53935')
+            .attr('stroke-width', 2)
+            .attr('transform', 'rotate(-20)');
+          ballGroup.append('path')
+            .attr('d', d3.arc()({
+              innerRadius: 8, outerRadius: 8, startAngle: -Math.PI/4, endAngle: -Math.PI*1.25
+            }))
+            .attr('fill', 'none')
+            .attr('stroke', '#e53935')
+            .attr('stroke-width', 2)
+            .attr('transform', 'rotate(20)');
+          // Set initial position
+          ballGroup.attr('transform', `translate(${x0},${y0})`);
+          const duration = Math.max(1200, Math.min(2800, 3500 - 18 * d.ev));
+          await new Promise(resolve => {
+            ballGroup.transition()
+              .duration(duration)
+              .ease(d3.easeCubicInOut)
+              .attrTween('transform', function() {
+                return function(t) {
+                  if (stopRequested) return `translate(${x0},${y0})`;
+                  const x = (1-t)*(1-t)*x0 + 2*(1-t)*t*cx + t*t*x1;
+                  const y = (1-t)*(1-t)*y0 + 2*(1-t)*t*cy + t*t*y1;
+                  return `translate(${x},${y})`;
+                }
+              })
+              .on('end', () => {
+                ballGroup.remove();
+                if (!stopRequested) {
+                  overlay.append('circle')
+                    .attr('class', 'landed-dot')
+                    .attr('r', 12)
+                    .attr('cx', x1)
+                    .attr('cy', y1)
+                    .attr('fill', d.type === 'HR' ? '#e53935' : '#1e88e5')
+                    .attr('stroke', '#fff')
+                    .attr('stroke-width', 2)
+                    .attr('opacity', 1);
+                }
+                resolve();
+              });
+          });
+          if (stopRequested) break;
+          await new Promise(r => setTimeout(r, 350));
+        }
+        playBtn.textContent = 'Play';
+        animating = false;
+      };
+    }
+
+
+
+
+    // --- Overlay grid logic ---
+    // Draws grid overlays and percentage labels for HR/FOUL clusters
+    function renderGridClusters(data, type) {
+      overlay.selectAll('.cluster-box').remove();
+      overlayLabels.selectAll('.cluster-box').remove();
+      // Only show overlays for HR or FOUL
+      if (type !== 'HR' && type !== 'FOUL') return;
+      // Only use selected type
+      const filtered = data.filter(d => d.type === type);
+      if (!filtered.length) return;
+      // Grid params
+      const binSize = type === 'HR' ? 260 : 180; // HR: larger bins
+      const minPoints = 3;
+      // Bin points by grid
+      const bins = {};
+      filtered.forEach(d => {
+        const bx = Math.floor(+d.x / binSize);
+        const by = Math.floor(+d.y / binSize);
+        const key = bx + ',' + by;
+        if (!bins[key]) bins[key] = [];
+        bins[key].push(d);
+      });
+      // Draw boxes and labels for bins with enough points
+      Object.entries(bins).forEach(([key, arr]) => {
+        if (arr.length < minPoints) return;
+        const [bx, by] = key.split(',').map(Number);
+        const x0 = bx * binSize, y0 = by * binSize;
+        // Color by type
+        const color = type === 'HR' ? '#e53935' : '#1e88e5';
+        // Draw box (background)
+        overlay.append('rect')
+          .attr('class', 'cluster-box')
+          .attr('x', x0)
+          .attr('y', y0)
+          .attr('width', binSize)
+          .attr('height', binSize)
+          .attr('fill', color)
+          .attr('opacity', 0.22)
+          .attr('stroke', color)
+          .attr('stroke-width', 2);
+        // Label: % of total balls in this bin (in overlayLabels group, above dots)
+        const percent = Math.round(100 * arr.length / filtered.length);
+        // White outline for text
+        overlayLabels.append('text')
+          .attr('class', 'cluster-box')
+          .attr('x', x0 + binSize/2)
+          .attr('y', y0 + binSize/2)
+          .attr('font-size', 30)
+          .attr('font-weight', 900)
+          .attr('stroke', '#fff')
+          .attr('stroke-width', 7)
+          .attr('opacity', 0.95)
+          .attr('text-anchor', 'middle')
+          .attr('dy', '0.35em')
+          .text(`${percent}%`);
+        // Foreground colored text
+        overlayLabels.append('text')
+          .attr('class', 'cluster-box')
+          .attr('x', x0 + binSize/2)
+          .attr('y', y0 + binSize/2)
+          .attr('font-size', 30)
+          .attr('font-weight', 900)
+          .attr('fill', color)
+          .attr('opacity', 0.98)
+          .attr('text-anchor', 'middle')
+          .attr('dy', '0.35em')
+          .text(`${percent}%`);
+      });
+    }
+
+    // Initial load
+    await loadAndRender(document.getElementById('playerSel').value);
+    document.getElementById('typeSel').addEventListener('change', () => {
+      // If filter is HR or FOUL, turn overlay on by default
+      const type = document.getElementById('typeSel').value;
+      if (type === 'HR' || type === 'FOUL') {
+        if (!overlayOn) {
+          overlayOn = true;
+          updateOverlayBtn();
+        }
+      } else {
+        // Optionally, turn overlay off for ALL
+        if (overlayOn) {
+          overlayOn = false;
+          updateOverlayBtn();
+        }
+      }
+      loadAndRender(document.getElementById('playerSel').value);
+    });
+    document.getElementById('playerSel').addEventListener('change', function() {
+      // Update player photo(s)
+      const playerFile = this.value;
+      const photoMap = {
+        'marcell-ozuna.csv': 'marcell-ozuna.avif',
+        'matt-olson.csv': 'matt-olson.avif',
+        'ronald-acuna-jr.csv': 'ronald-acuna-jr.avif',
+      };
+      const photosDiv = document.getElementById('playerPhotos');
+      photosDiv.innerHTML = '';
+      if (playerFile === 'ALL_PLAYERS') {
+        photosDiv.innerHTML = '';
+        photosDiv.style.display = 'none';
+      } else {
+        // Show only the selected player
+        const photoUrl = photoMap[playerFile] || '';
+        if (photoUrl) {
+          const img = document.createElement('img');
+          img.src = photoUrl;
+          img.alt = playerFile.replace('.csv','');
+          img.style.width = '60px';
+          img.style.height = '60px';
+          img.style.borderRadius = '50%';
+          img.style.objectFit = 'cover';
+          img.style.border = '2px solid #eee';
+          img.style.boxShadow = '0 2px 8px #0001';
+          img.style.position = 'relative';
+          img.style.right = '0px';
+          img.style.zIndex = 10;
+          photosDiv.appendChild(img);
+          photosDiv.style.display = 'flex';
+        } else {
+          photosDiv.style.display = 'none';
+        }
+      }
+      loadAndRender(this.value);
+    });
+
+    // Overlay toggle button
+    const toggleOverlayBtn = document.getElementById('toggleOverlayBtn');
+    function updateOverlayBtn() {
+      const type = document.getElementById('typeSel').value;
+      if (type === 'ALL') {
+        toggleOverlayBtn.style.display = 'none';
+      } else {
+        toggleOverlayBtn.style.display = '';
+        toggleOverlayBtn.textContent = overlayOn ? 'Hide % Overlay' : 'Show % Overlay';
+      }
+    }
+    updateOverlayBtn();
+    toggleOverlayBtn.addEventListener('click', function() {
+      overlayOn = !overlayOn;
+      updateOverlayBtn();
+      if (window.playerData) {
+        render(window.playerData);
+      }
+    });
+
+    // Also update overlay button visibility on filter change
+    document.getElementById('typeSel').addEventListener('change', updateOverlayBtn);
+
+    // Show SVG coordinates on right-click
+    svg.on('contextmenu', function(event) {
+      event.preventDefault();
+      // Get SVG coordinates from clientX/clientY
+      const svgNode = this;
+      const pt = svgNode.createSVGPoint();
+      pt.x = event.clientX;
+      pt.y = event.clientY;
+      const svgP = pt.matrixTransform(svgNode.getScreenCTM().inverse());
+      const x = Math.round(svgP.x);
+      const y = Math.round(svgP.y);
+      tooltip.style('opacity', 1)
+        .text(`x: ${x}, y: ${y}`)
+        .style('left', (event.pageX)+'px')
+        .style('top', (event.pageY)+'px');
+    });
+    // Hide tooltip on left click or mouseleave
+    svg.on('click', function() { tooltip.style('opacity', 0); });
+    svg.on('mouseleave', function() { tooltip.style('opacity', 0); });
+    // Make legend clickable to set filter
+    document.getElementById('legend-hr').addEventListener('click', function() {
+      document.getElementById('typeSel').value = 'HR';
+      document.getElementById('typeSel').dispatchEvent(new Event('change'));
+    });
+    document.getElementById('legend-foul').addEventListener('click', function() {
+      document.getElementById('typeSel').value = 'FOUL';
+      document.getElementById('typeSel').dispatchEvent(new Event('change'));
+    });
+
+  })();
+  </script>
+</body>
+</html>
