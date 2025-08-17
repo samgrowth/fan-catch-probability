@@ -1,4 +1,7 @@
+
 # Fan Ball-Catch Probability Map at Truist Park (Prototype)
+
+[**Live Demo**](https://samgrowth.github.io/fan-catch-probability/)
 
 This project is an interactive D3.js web app for visualizing where home runs and foul balls land at Truist Park, with overlays for catch probability. It is designed for demo and educational purposes, using mostly mock data inspired by MLB Statcast.
 
