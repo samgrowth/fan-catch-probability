@@ -3,6 +3,8 @@
 
 [**Live Demo**](https://samgrowth.github.io/fan-catch-probability/)
 
+> **Note:** This project is a proof of concept. The catch probability grid overlays are based on rough, illustrative grid sizes and small sample data. They are not intended to provide accurate predictions or recommendations. With larger datasets and finer grid resolution, the model could be made more precise.
+
 This project is an interactive D3.js web app for visualizing where home runs and foul balls land at Truist Park, with overlays for catch probability. It is designed for demo and educational purposes, using mostly mock data inspired by MLB Statcast.
 
 ## How It Works
