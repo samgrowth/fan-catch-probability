@@ -23,38 +23,61 @@
       margin-right: 2px;
       box-sizing: border-box;
     }
+    button, select {
+      outline: none;
+      transition: box-shadow 0.2s;
+    }
+    button:focus, select:focus {
+      outline: 2px solid #1976d2;
+      outline-offset: 2px;
+      box-shadow: 0 0 0 3px #90caf9;
+    }
+    @media (max-width: 800px) {
+      h1{ margin-right:70px; }
+      #ball-legend { margin-top:50px; }
+      select {
+        font-size: 18px;
+        min-width: 120px;
+      }
+    }
+    @media (max-width: 600px) {
+      #ball-legend { margin-top:90px; }
+    }
+    @media (max-width: 480px) {
+      #ball-legend { top:auto !important; bottom: 90px !important; }
+    }
   </style>
 </head>
 <body>
   <div id="app" style="position:relative;">
     <h1>Fan Ball-Catch Probability Map at Truist Park (Prototype)</h1>
     <div class="controls">
-      <label>Filter: 
-        <select id="typeSel">
+      <label for="typeSel">Filter: 
+        <select id="typeSel" aria-label="Filter by hit type">
           <option value="ALL">All</option>
           <option value="HR">Home Runs</option>
           <option value="FOUL">Foul Balls</option>
         </select>
       </label>
-      <label>Player: 
-        <select id="playerSel">
+      <label for="playerSel">Player: 
+        <select id="playerSel" aria-label="Select player">
           <option value="ALL_PLAYERS">All</option>
           <option value="marcell-ozuna.csv">Marcell Ozuna</option>
           <option value="matt-olson.csv">Matt Olson</option>
           <option value="ronald-acuna-jr.csv">Ronald Acuña Jr.</option>
         </select>
       </label>
-      <button id="playBtn" style="padding:6px 18px;font-size:15px;cursor:pointer;">Play</button>
-      <button id="toggleOverlayBtn" style="padding:6px 18px;font-size:15px;cursor:pointer;">Show % Overlay</button>
+      <button id="playBtn" style="padding:6px 18px;font-size:15px;cursor:pointer;" aria-label="Play animation of hits">Play</button>
+      <button id="toggleOverlayBtn" style="padding:6px 18px;font-size:15px;cursor:pointer;" aria-label="Toggle catch probability overlay">Show % Overlay</button>
     </div>
   <div id="playerPhotos" style="position:absolute;top:18px;right:18px;display:flex;flex-direction:row-reverse;gap:0;"></div>
     <!-- Legend for HR and FOUL -->
     <div id="ball-legend" style="position:absolute;top:90px;right:18px;display:flex;align-items:center;gap:18px;background:#fff8;padding:7px 16px 7px 12px;border-radius:12px;box-shadow:0 2px 8px #0001;font-size:15px;z-index:10;user-select:none;">
-      <span id="legend-hr" style="display:flex;align-items:center;gap:6px;cursor:pointer;">
+      <span id="legend-hr" style="display:flex;align-items:center;gap:6px;cursor:pointer;" tabindex="0" role="button" aria-label="Filter to Home Runs" title="Filter to Home Runs">
         <span style="display:inline-block;width:18px;height:18px;border-radius:50%;background:#e53935;border:2px solid #b71c1c;"></span>
         <span>Home Runs</span>
       </span>
-      <span id="legend-foul" style="display:flex;align-items:center;gap:6px;cursor:pointer;">
+      <span id="legend-foul" style="display:flex;align-items:center;gap:6px;cursor:pointer;" tabindex="0" role="button" aria-label="Filter to Foul Balls" title="Filter to Foul Balls">
         <span style="display:inline-block;width:18px;height:18px;border-radius:50%;background:#1e88e5;border:2px solid #0d47a1;"></span>
         <span>Foul Balls</span>
       </span>
@@ -62,11 +85,10 @@
     <!-- Inline SVG for crisp overlay control -->
     <div id="stage"></div>
     <div class="legend">
-      <p>2025 player data and inspiration from <a href="https://baseballsavant.mlb.com/" target="_blank" rel="noopener" style="color:#1e88e5;text-decoration:underline;">Baseball Savant</a>. Created by <a href="https://www.linkedin.com/in/samamorris/" target="_blank" rel="noopener" style="color:#1e88e5;text-decoration:underline;">Sam Morris</a>.</p>
       <p><strong>Disclaimer:</strong> This tool is for educational and demonstration purposes only. Largely the data shown here is mock data seeded from Baseball Savant. For actual MLB Statcast data, visit <a href="https://baseballsavant.mlb.com/" target="_blank" rel="noopener" style="color:#1e88e5;text-decoration:underline;">Baseball Savant</a>!</p>
     </div>
   </div>
-  <div id="tooltip" class="tooltip"></div>
+  <div id="tooltip" class="tooltip" aria-live="polite" role="status"></div>
 
 
   <!--
@@ -535,13 +557,23 @@
         if (photoUrl) {
           const img = document.createElement('img');
           img.src = photoUrl;
-          img.alt = playerFile.replace('.csv','');
+          // Use the label from the select option as alt text for accessibility
+          const playerSel = document.getElementById('playerSel');
+          let altText = '';
+          for (let i = 0; i < playerSel.options.length; i++) {
+            if (playerSel.options[i].value === playerFile) {
+              altText = playerSel.options[i].text;
+              break;
+            }
+          }
+          img.alt = altText || playerFile.replace('.csv','');
           img.style.width = '60px';
           img.style.height = '60px';
           img.style.borderRadius = '50%';
           img.style.objectFit = 'cover';
           img.style.border = '2px solid #eee';
           img.style.boxShadow = '0 2px 8px #0001';
+          img.style.background = '#fff';
           img.style.position = 'relative';
           img.style.right = '0px';
           img.style.zIndex = 10;
@@ -597,14 +629,16 @@
     svg.on('click', function() { tooltip.style('opacity', 0); });
     svg.on('mouseleave', function() { tooltip.style('opacity', 0); });
     // Make legend clickable to set filter
-    document.getElementById('legend-hr').addEventListener('click', function() {
-      document.getElementById('typeSel').value = 'HR';
+    function legendFilterHandler(type) {
+      document.getElementById('typeSel').value = type;
       document.getElementById('typeSel').dispatchEvent(new Event('change'));
-    });
-    document.getElementById('legend-foul').addEventListener('click', function() {
-      document.getElementById('typeSel').value = 'FOUL';
-      document.getElementById('typeSel').dispatchEvent(new Event('change'));
-    });
+    }
+    const legendHr = document.getElementById('legend-hr');
+    const legendFoul = document.getElementById('legend-foul');
+    legendHr.addEventListener('click', function() { legendFilterHandler('HR'); });
+    legendFoul.addEventListener('click', function() { legendFilterHandler('FOUL'); });
+    legendHr.addEventListener('keydown', function(e) { if (e.key === 'Enter' || e.key === ' ') { legendFilterHandler('HR'); e.preventDefault(); } });
+    legendFoul.addEventListener('keydown', function(e) { if (e.key === 'Enter' || e.key === ' ') { legendFilterHandler('FOUL'); e.preventDefault(); } });
 
   })();
   </script>
